@@ -214,13 +214,15 @@ class BaseAlgorithm(ABC):
         if not isinstance(env, VecEnv):
             # Patch to support gym 0.21/0.26 and gymnasium
             env = _patch_env(env)
-            if not is_wrapped(env, Monitor) and monitor_wrapper:
-                if verbose >= 1:
-                    print("Wrapping the env with a `Monitor` wrapper")
-                env = Monitor(env)
             if verbose >= 1:
                 print("Wrapping the env in a DummyVecEnv.")
-            env = DummyVecEnv([lambda: env])  # type: ignore[list-item, return-value]
+            env = DummyVecEnv([lambda: env] * n_envs)  # type: ignore[list-item, return-value]
+
+
+        if not is_wrapped(env.envs[0], Monitor) and monitor_wrapper:
+            if verbose >= 1:
+                print("Wrapping the env with a `Monitor` wrapper")
+            env.envs = list(Monitor(e) for e in env.envs)
 
         # Make sure that dict-spaces are not nested (not supported)
         check_for_nested_spaces(env.observation_space)
