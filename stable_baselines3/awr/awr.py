@@ -227,10 +227,15 @@ class AWR(OnPolicyAlgorithm):
                 # ratio between old and new policy, should be one at the first iteration
                 ratio = th.exp(log_prob - rollout_data.old_log_prob)
 
-                # clipped surrogate loss
-                policy_loss_1 = advantages * ratio
-                policy_loss_2 = advantages * th.clamp(ratio, 1 - clip_range, 1 + clip_range)
-                policy_loss = -th.min(policy_loss_1, policy_loss_2).mean()
+                ## PPO
+                # # clipped surrogate loss
+                # policy_loss_1 = advantages * ratio
+                # policy_loss_2 = advantages * th.clamp(ratio, 1 - clip_range, 1 + clip_range)
+                # policy_loss = -th.min(policy_loss_1, policy_loss_2).mean()
+
+                ## AWR
+                temp = 1
+                policy_loss = -(log_prob * (advantages / temp).exp()).mean()
 
                 # Logging
                 pg_losses.append(policy_loss.item())
