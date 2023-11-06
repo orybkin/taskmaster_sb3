@@ -6,6 +6,7 @@ import os
 import time
 from glob import glob
 from typing import Any, Dict, List, Optional, SupportsFloat, Tuple, Union
+import numpy as np
 
 import gymnasium as gym
 import pandas
@@ -53,6 +54,7 @@ class Monitor(gym.Wrapper[ObsType, ActType, ObsType, ActType]):
         self.info_keywords = info_keywords
         self.allow_early_resets = allow_early_resets
         self.rewards: List[float] = []
+        self.infos = []
         self.needs_reset = True
         self.episode_returns: List[float] = []
         self.episode_lengths: List[int] = []
@@ -74,6 +76,7 @@ class Monitor(gym.Wrapper[ObsType, ActType, ObsType, ActType]):
                 "wrap your env with Monitor(env, path, allow_early_resets=True)"
             )
         self.rewards = []
+        self.infos = []
         self.needs_reset = False
         for key in self.reset_keywords:
             value = kwargs.get(key)
@@ -93,11 +96,17 @@ class Monitor(gym.Wrapper[ObsType, ActType, ObsType, ActType]):
             raise RuntimeError("Tried to step environment that needs reset")
         observation, reward, terminated, truncated, info = self.env.step(action)
         self.rewards.append(float(reward))
+        self.infos.append(info)
         if terminated or truncated:
             self.needs_reset = True
+            ep_info = dict()
+            for k, v in self.infos[0].items():
+                if np.isscalar(v) and k in self.infos[1]:
+                    ep_info[f'{k}_mean'] = np.nanmean([i.get(k, np.nan) for i in self.infos])
+                    ep_info[f'{k}_last'] = self.infos[-1].get(k, np.nan)
             ep_rew = sum(self.rewards)
             ep_len = len(self.rewards)
-            ep_info = {"r": round(ep_rew, 6), "l": ep_len, "t": round(time.time() - self.t_start, 6)}
+            ep_info.update({"r": round(ep_rew, 6), "l": ep_len, "t": round(time.time() - self.t_start, 6)})
             for key in self.info_keywords:
                 ep_info[key] = info[key]
             self.episode_returns.append(ep_rew)
