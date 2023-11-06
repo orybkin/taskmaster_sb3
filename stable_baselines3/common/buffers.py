@@ -338,6 +338,29 @@ class ReplayBuffer(BaseBuffer):
             return np.float32
         return dtype
 
+class MixedBuffer(BaseBuffer):
+    def __init__(self, buffer1, buffer2, ratio):
+        self.buffer1 = buffer1
+        self.buffer2 = buffer2
+        self.ratio = ratio
+        self.buffer_size = buffer1.buffer_size = buffer2.buffer_size
+        self.n_envs = buffer1.n_envs
+
+    def get(self, batch_size: Optional[int] = None) -> Generator[RolloutBufferSamples, None, None]:
+        start_idx = 0
+        batch1_gen = self.buffer1.get(int(batch_size * self.ratio))
+        batch2_gen = self.buffer2.get(int(batch_size * (1 - self.ratio)))
+        shuffle = th.randperm(batch_size)
+        while start_idx < self.buffer_size * self.n_envs:
+            batch1 = next(batch1_gen)
+            batch2 = next(batch2_gen)
+            # merged_batch = type(batch1)(*[th.cat([batch1[i], batch2[i]], 0)[shuffle] for i in range(len(batch1))])
+            merged_batch = type(batch1)(*[th.cat([batch1[i], batch2[i]], 0) for i in range(len(batch1))])
+            yield merged_batch
+            start_idx += batch_size
+
+    def _get_samples(self, *args):
+        raise NotImplementedError
 
 class RolloutBuffer(BaseBuffer):
     """

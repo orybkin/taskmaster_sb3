@@ -1,4 +1,5 @@
 import warnings
+import copy
 from typing import Any, ClassVar, Dict, Optional, Type, TypeVar, Union
 
 import numpy as np
@@ -6,13 +7,13 @@ import torch as th
 from gymnasium import spaces
 from torch.nn import functional as F
 
-from stable_baselines3.common.buffers import RolloutBuffer
+from stable_baselines3.common.buffers import RolloutBuffer, MixedBuffer
 from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
 from stable_baselines3.common.policies import ActorCriticCnnPolicy, ActorCriticPolicy, BasePolicy, MultiInputActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
-from stable_baselines3.common.utils import explained_variance, get_schedule_fn
+from stable_baselines3.common.utils import explained_variance, get_schedule_fn, obs_as_tensor, safe_mean
 
-SelfPPO = TypeVar("SelfPPO", bound="PPO")
+SelfAWR = TypeVar("SelfAWR", bound="AWR")
 
 
 class AWR(OnPolicyAlgorithm):
@@ -185,6 +186,44 @@ class AWR(OnPolicyAlgorithm):
 
             self.clip_range_vf = get_schedule_fn(self.clip_range_vf)
 
+    def make_relabeled_buffer(self, original_buffer):
+        """
+        Makes a buffer where the goal is relabeled to be from the same trajectory as the original state
+        """
+        # TODO implement standard relabeling. Implement Geometric distribution. Check HER and LEXA. How to do with for PPO?
+        relabeled_buffer = copy.deepcopy(original_buffer)
+
+        # Rewards and observations. Note - these are specific to reacher
+        # goal_idx = np.random.randint(original_buffer.observations.shape[1], size=original_buffer.observations.shape[0])
+        # goal_obs = np.take_along_axis(original_buffer.observations, goal_idx[:, None, None], 1)
+        # relabeled_buffer.observations[..., -2:] = goal_obs[:, :, -4:-2]
+        relabeled_buffer.observations[..., -2:] = original_buffer.observations[:, -1:, -4:-2]
+        goal = relabeled_buffer.observations[..., -2:]
+        pos = relabeled_buffer.observations[..., -4:-2]
+        relabeled_buffer.rewards = -np.linalg.norm(pos - goal, axis=-1) > -0.02
+
+        with th.no_grad():
+            obs_tensor = obs_as_tensor(relabeled_buffer.observations, self.device)
+            act_tensor = obs_as_tensor(relabeled_buffer.actions, self.device)
+            distribution = self.policy.get_distribution(obs_tensor.flatten(0,1))
+            log_probs = distribution.log_prob(act_tensor.flatten(0,1))
+            relabeled_buffer.log_probs = log_probs.reshape(list(obs_tensor.shape[:2])).cpu().numpy()
+
+        # Values. Is there a cleaner way to do this?
+        with th.no_grad():
+            values = self.policy.predict_values(obs_tensor.flatten(0,1))
+            relabeled_buffer.values = values.reshape(list(obs_tensor.shape[:2])).cpu().numpy()
+            
+        # Returns and advantages
+        relabeled_buffer.returns = np.zeros_like(relabeled_buffer.returns)
+        relabeled_buffer.advantages = np.zeros_like(relabeled_buffer.advantages)
+        with th.no_grad():
+            obs_tensor = obs_as_tensor(self._last_obs, self.device)
+            values = self.policy.predict_values(obs_tensor)  
+            relabeled_buffer.compute_returns_and_advantage(last_values=values, dones=self._last_episode_starts)
+
+        self.relabeled_buffer = relabeled_buffer
+
     def train(self) -> None:
         """
         Update policy using the currently gathered rollout buffer.
@@ -199,35 +238,50 @@ class AWR(OnPolicyAlgorithm):
         if self.clip_range_vf is not None:
             clip_range_vf = self.clip_range_vf(self._current_progress_remaining)  # type: ignore[operator]
 
+        actor_buffer = critic_buffer = self.rollout_buffer
+        if self.relabel_ratio > 0:
+            self.make_relabeled_buffer(self.rollout_buffer)
+            mixed_buffer = MixedBuffer(self.relabeled_buffer, self.rollout_buffer, self.relabel_ratio)
+            if self.relabel_actor:
+                actor_buffer = mixed_buffer
+            if self.relabel_critic:
+                critic_buffer = mixed_buffer
+
         entropy_losses = []
         pg_losses, value_losses = [], []
         clip_fractions = []
+        metrics = dict(advantages_mean=[], advantages_std=[])
 
         continue_training = True
         # train for n_epochs epochs
         for epoch in range(self.n_epochs):
             approx_kl_divs = []
             # Do a complete pass on the rollout buffer
-            for rollout_data in self.rollout_buffer.get(self.batch_size):
-                actions = rollout_data.actions
+            for actor_data, critic_data in zip(actor_buffer.get(self.batch_size), critic_buffer.get(self.batch_size)):
+                actions = actor_data.actions
                 if isinstance(self.action_space, spaces.Discrete):
                     # Convert discrete action from float to long
-                    actions = rollout_data.actions.long().flatten()
+                    actions = actor_data.actions.long().flatten()
 
                 # Re-sample the noise matrix because the log_std has changed
                 if self.use_sde:
                     self.policy.reset_noise(self.batch_size)
 
-                values, log_prob, entropy = self.policy.evaluate_actions(rollout_data.observations, actions)
-                values = values.flatten()
+                policy_distribution = self.policy.get_distribution(actor_data.observations)
+                log_prob = policy_distribution.log_prob(actions)
+                entropy = policy_distribution.entropy()
+
                 # Normalize advantage
-                advantages = rollout_data.advantages
+                advantages = actor_data.advantages
                 # Normalization does not make sense if mini batchsize == 1, see GH issue #325
                 if self.normalize_advantage and len(advantages) > 1:
-                    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+                    bs = self.batch_size
+                    adv_mean = advantages.mean()
+                    adv_std = advantages.std()
+                    advantages = (advantages - advantages[-bs:].mean()) / (advantages[-bs:].std() + 1e-8)
 
                 # ratio between old and new policy, should be one at the first iteration
-                ratio = th.exp(log_prob - rollout_data.old_log_prob)
+                ratio = th.exp(log_prob - actor_data.old_log_prob)
 
                 ## PPO
                 # # clipped surrogate loss
@@ -239,22 +293,11 @@ class AWR(OnPolicyAlgorithm):
                 policy_loss = -(log_prob * th.clamp((advantages / self.temperature).exp(), max=20)).mean()
 
                 # Logging
+                metrics['advantages_mean'].append(adv_mean.item())
+                metrics['advantages_std'].append(adv_std.item())
                 pg_losses.append(policy_loss.item())
                 clip_fraction = th.mean((th.abs(ratio - 1) > clip_range).float()).item()
                 clip_fractions.append(clip_fraction)
-
-                if self.clip_range_vf is None:
-                    # No clipping
-                    values_pred = values
-                else:
-                    # Clip the difference between old and new value
-                    # NOTE: this depends on the reward scaling
-                    values_pred = rollout_data.old_values + th.clamp(
-                        values - rollout_data.old_values, -clip_range_vf, clip_range_vf
-                    )
-                # Value loss using the TD(gae_lambda) target
-                value_loss = F.mse_loss(rollout_data.returns, values_pred)
-                value_losses.append(value_loss.item())
 
                 # Entropy loss favor exploration
                 if entropy is None:
@@ -262,8 +305,22 @@ class AWR(OnPolicyAlgorithm):
                     entropy_loss = -th.mean(-log_prob)
                 else:
                     entropy_loss = -th.mean(entropy)
-
                 entropy_losses.append(entropy_loss.item())
+
+                ## Value
+                values = self.policy.predict_values(critic_data.observations).flatten()
+                if self.clip_range_vf is None:
+                    # No clipping
+                    values_pred = values
+                else:
+                    # Clip the difference between old and new value
+                    # NOTE: this depends on the reward scaling
+                    values_pred = critic_data.old_values + th.clamp(
+                        values - critic_data.old_values, -clip_range_vf, clip_range_vf
+                    )
+                # Value loss using the TD(gae_lambda) target
+                value_loss = F.mse_loss(critic_data.returns, values_pred)
+                value_losses.append(value_loss.item())
 
                 loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss
 
@@ -272,7 +329,7 @@ class AWR(OnPolicyAlgorithm):
                 # and discussion in PR #419: https://github.com/DLR-RM/stable-baselines3/pull/419
                 # and Schulman blog: http://joschu.net/blog/kl-approx.html
                 with th.no_grad():
-                    log_ratio = log_prob - rollout_data.old_log_prob
+                    log_ratio = log_prob - actor_data.old_log_prob
                     approx_kl_div = th.mean((th.exp(log_ratio) - 1) - log_ratio).cpu().numpy()
                     approx_kl_divs.append(approx_kl_div)
 
@@ -314,14 +371,14 @@ class AWR(OnPolicyAlgorithm):
             self.logger.record("train/clip_range_vf", clip_range_vf)
 
     def learn(
-        self: SelfPPO,
+        self: SelfAWR,
         total_timesteps: int,
         callback: MaybeCallback = None,
         log_interval: int = 1,
         tb_log_name: str = "PPO",
         reset_num_timesteps: bool = True,
         progress_bar: bool = False,
-    ) -> SelfPPO:
+    ) -> SelfAWR:
         return super().learn(
             total_timesteps=total_timesteps,
             callback=callback,
