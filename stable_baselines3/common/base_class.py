@@ -218,8 +218,7 @@ class BaseAlgorithm(ABC):
                 print("Wrapping the env in a DummyVecEnv.")
             env = DummyVecEnv([lambda: env] * n_envs)  # type: ignore[list-item, return-value]
 
-
-        if not is_wrapped(env.envs[0], Monitor) and monitor_wrapper:
+        if hasattr(env, 'envs') and not is_wrapped(env.envs[0], Monitor) and monitor_wrapper:
             if verbose >= 1:
                 print("Wrapping the env with a `Monitor` wrapper")
             env.envs = list(Monitor(e) for e in env.envs)

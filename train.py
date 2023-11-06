@@ -6,13 +6,16 @@ from stable_baselines3 import PPO
 import imageio
 import numpy as np
 from tensorboardX.utils import _prepare_video
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 import wandb
 from wandb.integration.sb3 import WandbCallback
+from stable_baselines3.common.monitor import Monitor
+from collections import namedtuple
 
-n = 4
+n_envs = 32
 # env = gym.make("Reacher-v4", render_mode='rgb_array', width=128, height=128)
-env = DummyVecEnv([lambda: gym.make("Reacher-v4", render_mode='rgb_array', width=128, height=128)] * n)
+# env = DummyVecEnv([lambda: gym.make("Reacher-v4", render_mode='rgb_array', width=128, height=128)] * n)
+env = SubprocVecEnv([lambda: Monitor(gym.make("Reacher-v4", render_mode='rgb_array', width=128, height=128))] * n_envs, 'fork')
 
 config = dict(
     total_timesteps=100_000,
@@ -45,7 +48,7 @@ model.learn(**config,
 run.finish()
 
 vec_env = model.get_env()
-for i in range(n):
+for i in range(n_envs):
     obs = vec_env.reset()
     vid = []
     for i in range(1000):
