@@ -85,6 +85,7 @@ class AWR(OnPolicyAlgorithm):
         n_steps: int = 2048,
         batch_size: int = 64,
         n_epochs: int = 10,
+        temperature: float = 1,
         gamma: float = 0.99,
         gae_lambda: float = 0.95,
         clip_range: Union[float, Schedule] = 0.2,
@@ -168,6 +169,7 @@ class AWR(OnPolicyAlgorithm):
         self.clip_range_vf = clip_range_vf
         self.normalize_advantage = normalize_advantage
         self.target_kl = target_kl
+        self.temperature = temperature
 
         if _init_setup_model:
             self._setup_model()
@@ -234,8 +236,7 @@ class AWR(OnPolicyAlgorithm):
                 # policy_loss = -th.min(policy_loss_1, policy_loss_2).mean()
 
                 ## AWR
-                temp = 1
-                policy_loss = -(log_prob * (advantages / temp).exp()).mean()
+                policy_loss = -(log_prob * th.clamp((advantages / self.temperature).exp(), max=20)).mean()
 
                 # Logging
                 pg_losses.append(policy_loss.item())
