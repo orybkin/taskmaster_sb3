@@ -1,6 +1,8 @@
 import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
+import math
+import matplotlib.pyplot as plt
 
 import numpy as np
 import torch as th
@@ -13,6 +15,7 @@ from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from stable_baselines3.common.utils import obs_as_tensor, safe_mean
 from stable_baselines3.common.vec_env import VecEnv
+from stable_baselines3.common.logger import Image
 
 SelfOnPolicyAlgorithm = TypeVar("SelfOnPolicyAlgorithm", bound="OnPolicyAlgorithm")
 
@@ -296,7 +299,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                 assert self.ep_info_buffer is not None
                 time_elapsed = max((time.time_ns() - self.start_time) / 1e9, sys.float_info.epsilon)
                 fps = int((self.num_timesteps - self._num_timesteps_at_start) / time_elapsed)
-                self.logger.record("time/iterations", iteration, exclude="tensorboard")
+                self.logger.record("time/iterations", iteration)
                 if len(self.ep_info_buffer) > 0 and len(self.ep_info_buffer[0]) > 0:
                     self.logger.record("rollout/ep_rew_mean", safe_mean([ep_info["r"] for ep_info in self.ep_info_buffer]))
                     self.logger.record("rollout/ep_len_mean", safe_mean([ep_info["l"] for ep_info in self.ep_info_buffer]))
@@ -305,11 +308,38 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                         self.logger.record(f"rollout/{k}", safe_mean([ep_info[k] for ep_info in self.ep_info_buffer]))
 
                 self.logger.record("time/fps", fps)
-                self.logger.record("time/time_elapsed", int(time_elapsed), exclude="tensorboard")
-                self.logger.record("time/total_timesteps", self.num_timesteps, exclude="tensorboard")
+                self.logger.record("time/time_elapsed", int(time_elapsed))
+                self.logger.record("time/total_timesteps", self.num_timesteps)
                 self.logger.dump(step=self.num_timesteps)
 
             self.train()
+
+            # Log images
+            if iteration % 10 == 0 or True:
+                # Value vis
+                n_goal_vis = 100
+                theta = np.zeros([n_goal_vis, 2])
+                fingertip = np.repeat([[0.21, 0]], n_goal_vis, 0)
+
+                # Make goal grid
+                x_values = np.linspace(-0.2, 0.2, int(math.sqrt(n_goal_vis))) 
+                y_values = np.linspace(-0.2, 0.2, int(math.sqrt(n_goal_vis))) 
+                X, Y = np.meshgrid(x_values, y_values)
+                goals = np.concatenate([X[:,:,None],Y[:,:,None]], 2).reshape([-1, 2])
+                obs = np.concatenate([np.cos(theta), np.sin(theta), np.zeros_like(theta), fingertip, goals,], 1)
+                obs_tensor = obs_as_tensor(obs, self.device)
+                with th.no_grad(): values = self.policy.predict_values(obs_tensor).cpu().numpy()[:, 0]
+
+                heatmap = plt.pcolormesh(X, Y, values.reshape(X.shape), shading='auto')
+                plt.colorbar(heatmap)
+                plt.xlabel('X Coordinate')
+                plt.ylabel('Y Coordinate')
+                plt.savefig(f'runs/{self.run_name}/values_{iteration}.png', dpi=300)
+
+                plt.gcf().canvas.draw()
+                width, height = plt.gcf().canvas.get_width_height()
+                image_as_np_array = np.frombuffer(plt.gcf().canvas.tostring_rgb(), dtype='uint8').reshape(height, width, 3)
+                self.logger.record("values", Image(image_as_np_array, 'HWC'), exclude='stdout')
 
         callback.on_training_end()
 

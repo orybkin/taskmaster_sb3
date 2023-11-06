@@ -181,7 +181,7 @@ class A2C(OnPolicyAlgorithm):
         explained_var = explained_variance(self.rollout_buffer.values.flatten(), self.rollout_buffer.returns.flatten())
 
         self._n_updates += 1
-        self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
+        self.logger.record("train/n_updates", self._n_updates)
         self.logger.record("train/explained_variance", explained_var)
         self.logger.record("train/entropy_loss", entropy_loss.item())
         self.logger.record("train/policy_loss", policy_loss.item())

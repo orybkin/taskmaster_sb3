@@ -296,6 +296,8 @@ class AWR(OnPolicyAlgorithm):
         explained_var = explained_variance(self.rollout_buffer.values.flatten(), self.rollout_buffer.returns.flatten())
 
         # Logs
+        for metric in metrics: 
+            self.logger.record(f"train/{metric}", np.mean(metrics[metric]))
         self.logger.record("train/entropy_loss", np.mean(entropy_losses))
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         self.logger.record("train/value_loss", np.mean(value_losses))
@@ -306,7 +308,7 @@ class AWR(OnPolicyAlgorithm):
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", th.exp(self.policy.log_std).mean().item())
 
-        self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
+        self.logger.record("train/n_updates", self._n_updates)
         self.logger.record("train/clip_range", clip_range)
         if self.clip_range_vf is not None:
             self.logger.record("train/clip_range_vf", clip_range_vf)
