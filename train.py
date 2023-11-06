@@ -11,17 +11,31 @@ import wandb
 from wandb.integration.sb3 import WandbCallback
 from stable_baselines3.common.monitor import Monitor
 from collections import namedtuple
+import argparse
+from datetime import datetime
 
-n_envs = 32
-# env = gym.make("Reacher-v4", render_mode='rgb_array', width=128, height=128)
-# env = DummyVecEnv([lambda: gym.make("Reacher-v4", render_mode='rgb_array', width=128, height=128)] * n)
-env = SubprocVecEnv([lambda: Monitor(gym.make("Reacher-v4", render_mode='rgb_array', width=128, height=128))] * n_envs, 'fork')
+# Create the parser
+parser = argparse.ArgumentParser(description='Process some integers.')
+parser.add_argument('--n_envs', type=int, default=32)
+parser.add_argument('--relabel_actor', type=int, default=1)
+parser.add_argument('--relabel_critic', type=int, default=1)
+parser.add_argument('--relabel_ratio', type=float, default=.0)
+parser.add_argument('--debug', type=int, default=0)
+parser.add_argument('--total_timesteps', type=int, default=5_000_000)
+# parser.add_argument('--algo', type=str, default='awr')
+args = parser.parse_args()
+
+n_envs = args.n_envs
+if not args.debug:
+    env = SubprocVecEnv([lambda: Monitor(gym.make("Reacher-v4", render_mode='rgb_array', width=128, height=128))] * n_envs, 'fork')
+else:
+    env = DummyVecEnv([lambda: Monitor(gym.make("Reacher-v4", render_mode='rgb_array', width=128, height=128))] * n_envs)
 callback = None
-run = namedtuple('Run', ['id'])(id='dummy')
-log_wandb = False
+run_name = 'dummy'
+log_wandb = not args.debug
 
 config = dict(
-    total_timesteps=5000_000,
+    total_timesteps=args.total_timesteps,
 )
 
 # # Gold standard PPO config for reacher - trains somewhat well in 1M steps
@@ -43,6 +57,9 @@ policy_config = dict(
     batch_size=64,
     temperature=0.2,
     ent_coef=0.05,
+    relabel_ratio=args.relabel_ratio,
+    relabel_actor=args.relabel_actor,
+    relabel_critic=args.relabel_critic,
 )
 
 if log_wandb:
@@ -58,12 +75,15 @@ if log_wandb:
         monitor_gym=True,  # auto-upload the videos of agents playing the game
         # save_code=True,  # optional
     )
+    run_name = datetime.now().strftime("%Y%m%d-%H%M%S-") + run.name
+    callback = WandbCallback(model_save_path=f"models/{run_name}",verbose=2,)
 
-model = algo("MlpPolicy", env, verbose=1, tensorboard_log=f"runs/{run.id}", **policy_config)
+model = algo("MlpPolicy", env, verbose=1, run_name=run_name, tensorboard_log=f"runs/{run_name}", **policy_config)
 model.learn(**config, callback=callback)
 if log_wandb:
     run.finish()
 
+## Gif
 vec_env = model.get_env()
 for i in range(n_envs):
     obs = vec_env.reset()
@@ -73,7 +93,7 @@ for i in range(n_envs):
         obs, reward, done, info = vec_env.step(action)
         vid.append(vec_env.render())
 
-imageio.mimwrite(f'gifs/{run.id}.gif', np.stack(vid, 0).astype(np.uint8))
+imageio.mimwrite(f'gifs/{run_name}.gif', np.stack(vid, 0).astype(np.uint8))
     # VecEnv resets automatically
     # if done:
     #   obs = env.reset()

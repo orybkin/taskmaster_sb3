@@ -70,6 +70,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         max_grad_norm: float,
         use_sde: bool,
         sde_sample_freq: int,
+        run_name: str = '',
         rollout_buffer_class: Optional[Type[RolloutBuffer]] = None,
         rollout_buffer_kwargs: Optional[Dict[str, Any]] = None,
         stats_window_size: int = 100,
@@ -81,6 +82,9 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
         supported_action_spaces: Optional[Tuple[Type[spaces.Space], ...]] = None,
+        relabel_ratio: float = 0,
+        relabel_actor: bool = True,
+        relabel_critic: bool = True,
     ):
         super().__init__(
             policy=policy,
@@ -98,12 +102,16 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             supported_action_spaces=supported_action_spaces,
         )
 
+        self.run_name = run_name
         self.n_steps = n_steps
         self.gamma = gamma
         self.gae_lambda = gae_lambda
         self.ent_coef = ent_coef
         self.vf_coef = vf_coef
         self.max_grad_norm = max_grad_norm
+        self.relabel_ratio = relabel_ratio
+        self.relabel_actor = relabel_actor
+        self.relabel_critic = relabel_critic
         self.rollout_buffer_class = rollout_buffer_class
         self.rollout_buffer_kwargs = rollout_buffer_kwargs or {}
 
