@@ -22,7 +22,11 @@ parser.add_argument('--relabel_critic', type=int, default=1)
 parser.add_argument('--relabel_ratio', type=float, default=.0)
 parser.add_argument('--debug', type=int, default=0)
 parser.add_argument('--total_timesteps', type=int, default=5_000_000)
-# parser.add_argument('--algo', type=str, default='awr')
+parser.add_argument('--learning_rate', type=float, default=3e-4)
+parser.add_argument('--ent_coef', type=float, default=2e-4)
+parser.add_argument('--temperature', type=float, default=0.2)
+parser.add_argument('--n_steps', type=int, default=32768)
+parser.add_argument('--algo', type=str, default='PPO')
 args = parser.parse_args()
 
 n_envs = args.n_envs
@@ -34,29 +38,17 @@ callback = None
 run_name = 'dummy'
 log_wandb = not args.debug
 
+algo = dict(PPO=PPO, AWR=AWR)[args.algo]
 config = dict(
     total_timesteps=args.total_timesteps,
 )
-
-# # Gold standard PPO config for reacher - trains somewhat well in 1M steps
-# algo = PPO
-# policy_config = dict(
-#     n_steps=4096 * 8 // n_envs,
-#     learning_rate=3e-4,
-#     n_epochs=10,
-#     batch_size=64,
-#     ent_coef=2e-4,
-# )
-
-# Gold standard AWR config for reacher - converges in 50k steps
-algo = AWR
 policy_config = dict(
-    n_steps=4096 * 4 // n_envs,
-    learning_rate=5e-4,
+    n_steps=args.n_steps // n_envs,
+    learning_rate=args.learning_rate,
     n_epochs=10,
     batch_size=64,
-    temperature=0.2,
-    ent_coef=0.05,
+    temperature=args.temperature,
+    ent_coef=args.ent_coef,
     relabel_ratio=args.relabel_ratio,
     relabel_actor=args.relabel_actor,
     relabel_critic=args.relabel_critic,

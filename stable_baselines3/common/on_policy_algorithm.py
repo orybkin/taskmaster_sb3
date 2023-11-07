@@ -315,7 +315,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             self.train()
 
             # Log images
-            if iteration % 10 == 0 or True:
+            if iteration % 10 == 0:
                 # Value vis
                 n_goal_vis = 100
                 theta = np.zeros([n_goal_vis, 2])
@@ -330,6 +330,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                 obs_tensor = obs_as_tensor(obs, self.device)
                 with th.no_grad(): values = self.policy.predict_values(obs_tensor).cpu().numpy()[:, 0]
 
+                plt.figure()
                 heatmap = plt.pcolormesh(X, Y, values.reshape(X.shape), shading='auto')
                 plt.colorbar(heatmap)
                 plt.xlabel('X Coordinate')
