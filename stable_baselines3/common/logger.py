@@ -35,7 +35,7 @@ class Video:
     """
     Video data class storing the video frames and the frame per seconds
 
-    :param frames: frames to create the video from
+    :param frames: frames to create the video from. shape = [b t c h w]
     :param fps: frames per second
     """
 

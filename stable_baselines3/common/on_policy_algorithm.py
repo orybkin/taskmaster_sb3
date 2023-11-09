@@ -3,6 +3,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 import math
 import matplotlib.pyplot as plt
+import imageio
 
 import numpy as np
 import torch as th
@@ -15,7 +16,7 @@ from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from stable_baselines3.common.utils import obs_as_tensor, safe_mean
 from stable_baselines3.common.vec_env import VecEnv
-from stable_baselines3.common.logger import Image
+from stable_baselines3.common.logger import Image, Video
 
 SelfOnPolicyAlgorithm = TypeVar("SelfOnPolicyAlgorithm", bound="OnPolicyAlgorithm")
 
@@ -88,6 +89,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         relabel_ratio: float = 0,
         relabel_actor: bool = True,
         relabel_critic: bool = True,
+        **kwargs
     ):
         super().__init__(
             policy=policy,
@@ -122,7 +124,8 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             self._setup_model()
 
     def _setup_model(self) -> None:
-        self._setup_lr_schedule()
+        # self._setup_lr_schedule()
+        self.lr_schedule = lambda *args: self.learning_rate
         self.set_random_seed(self.seed)
 
         if self.rollout_buffer_class is None:
@@ -316,7 +319,20 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
             # Log images
             if iteration % 10 == 0:
-                # Value vis
+                ## Execution
+
+                vec_env = self.get_env()
+                obs = vec_env.reset()
+                vid = []
+                for i in range(50):
+                    action, _states = self.predict(obs, deterministic=True)
+                    obs, reward, done, info = vec_env.step(action)
+                    vid.append(vec_env.render())
+
+                imageio.mimwrite(f'gifs/{self.run_name}_{iteration}.gif', np.stack(vid, 0).astype(np.uint8))
+                self.logger.record("execution", Video(np.stack(vid, 0)[None].transpose([0, 1, 4, 2, 3]), 10), exclude='stdout')
+
+                ## Value vis
                 n_goal_vis = 100
                 theta = np.zeros([n_goal_vis, 2])
                 fingertip = np.repeat([[0.21, 0]], n_goal_vis, 0)

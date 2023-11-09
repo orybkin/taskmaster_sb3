@@ -109,6 +109,7 @@ setup(
         "pandas",
         # Plotting learning curves
         "matplotlib",
+        "moviepy",
     ],
     extras_require={
         "tests": [
