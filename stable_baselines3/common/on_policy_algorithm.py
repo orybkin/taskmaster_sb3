@@ -284,38 +284,49 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         # TODO implement standard relabeling. Implement Geometric distribution. Check HER and LEXA. How to do with for PPO?
         relabeled_buffer = copy.deepcopy(original_buffer)
 
+        # Get last states
+        # TODO double check this works for second iteration
+        obs = original_buffer.observations
+        idx = original_buffer.episode_starts.astype(int)
+        init_idx = idx.argmax(0)
+        idx = idx.cumsum(0) * 50 - 1 + init_idx[None, :] # TODO  this is hardcoded for now
+        idx = np.minimum(idx, obs.shape[0] - 1)
+        goals = np.take_along_axis(obs, idx[:, :, None], 0)
         # Rewards and observations. Note - these are specific to reacher
         # goal_idx = np.random.randint(original_buffer.observations.shape[1], size=original_buffer.observations.shape[0])
         # goal_obs = np.take_along_axis(original_buffer.observations, goal_idx[:, None, None], 1)
         # relabeled_buffer.observations[..., -2:] = goal_obs[:, :, -4:-2]
-        relabeled_buffer.observations[..., -2:] = original_buffer.observations[:, -1:, -4:-2]
+        relabeled_buffer.observations[..., -2:] = goals[:, :, -4:-2]
         goal = relabeled_buffer.observations[..., -2:]
         pos = relabeled_buffer.observations[..., -4:-2]
-        relabeled_buffer.rewards = -np.linalg.norm(pos - goal, axis=-1) > -0.02
 
+        relabeled_buffer.rewards = -np.linalg.norm(pos - goal, axis=-1) > -0.02
+        last_obs = self._last_obs.copy()
+        last_obs[:, -2:] = relabeled_buffer.observations[-1, :, -2:]
+        self.update_values(relabeled_buffer, last_obs)
+
+        self.relabeled_buffer = relabeled_buffer
+
+    def update_values(self, buffer, last_obs):
         with th.no_grad():
-            obs_tensor = obs_as_tensor(relabeled_buffer.observations, self.device)
-            act_tensor = obs_as_tensor(relabeled_buffer.actions, self.device)
+            obs_tensor = obs_as_tensor(buffer.observations, self.device)
+            act_tensor = obs_as_tensor(buffer.actions, self.device)
             distribution = self.policy.get_distribution(obs_tensor.flatten(0,1))
             log_probs = distribution.log_prob(act_tensor.flatten(0,1))
-            relabeled_buffer.log_probs = log_probs.reshape(list(obs_tensor.shape[:2])).cpu().numpy()
+            buffer.log_probs = log_probs.reshape(list(obs_tensor.shape[:2])).cpu().numpy()
 
         # Values. Is there a cleaner way to do this?
         with th.no_grad():
             values = self.policy.predict_values(obs_tensor.flatten(0,1))
-            relabeled_buffer.values = values.reshape(list(obs_tensor.shape[:2])).cpu().numpy()
+            buffer.values = values.reshape(list(obs_tensor.shape[:2])).cpu().numpy()
             
         # Returns and advantages
-        relabeled_buffer.returns = np.zeros_like(relabeled_buffer.returns)
-        relabeled_buffer.advantages = np.zeros_like(relabeled_buffer.advantages)
+        buffer.returns = np.zeros_like(buffer.returns)
+        buffer.advantages = np.zeros_like(buffer.advantages)
         with th.no_grad():
-            last_obs = self._last_obs.copy()
-            last_obs[:, -2:] = relabeled_buffer.observations[0, :, -2:]
             obs_tensor = obs_as_tensor(last_obs, self.device)
             values = self.policy.predict_values(obs_tensor)  
-            relabeled_buffer.compute_returns_and_advantage(last_values=values, dones=self._last_episode_starts)
-
-        self.relabeled_buffer = relabeled_buffer
+            buffer.compute_returns_and_advantage(last_values=values, dones=self._last_episode_starts)
 
     def learn(
         self: SelfOnPolicyAlgorithm,
@@ -345,6 +356,10 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
             if not continue_training:
                 break
+
+            # import pickle
+            # with open("good_ppo_data_reacher.pkl", "rb") as f: self.rollout_buffer, self._last_obs = pickle.load(f)
+            # self.update_values(self.rollout_buffer, self._last_obs)
 
             iteration += 1
             self._update_current_progress_remaining(self.num_timesteps, total_timesteps)
