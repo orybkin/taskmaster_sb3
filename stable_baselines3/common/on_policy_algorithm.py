@@ -387,7 +387,8 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                 actor_buffer = critic_buffer = self.rollout_buffer
                 if self.relabel_ratio > 0:
                     self.make_relabeled_buffer(self.rollout_buffer)
-                    mixed_buffer = MixedBuffer(self.relabeled_buffer, self.rollout_buffer, self.relabel_ratio)
+                    if self.relabel_actor or self.relabel_critic:
+                        mixed_buffer = MixedBuffer(self.relabeled_buffer, self.rollout_buffer, self.relabel_ratio)
                     if self.relabel_actor:
                         actor_buffer = mixed_buffer
                     if self.relabel_critic:

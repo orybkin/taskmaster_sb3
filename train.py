@@ -2,7 +2,7 @@ import os
 os.environ['MUJOCO_GL']='egl'
 
 import gymnasium as gym
-from stable_baselines3 import PPO, AWR
+from stable_baselines3 import PPO, AWR, PAWR
 import imageio
 import numpy as np
 from tensorboardX.utils import _prepare_video
@@ -24,6 +24,7 @@ parser.add_argument('--debug', type=int, default=0)
 parser.add_argument('--total_timesteps', type=int, default=5_000_000)
 parser.add_argument('--learning_rate', type=float, default=3e-4)
 parser.add_argument('--ent_coef', type=float, default=2e-4)
+parser.add_argument('--awr_coef', type=float, default=1.0)
 parser.add_argument('--temperature', type=float, default=0.2)
 parser.add_argument('--target_kl', type=float, default=None)
 parser.add_argument('--max_grad_norm', type=float, default=0.5)
@@ -48,7 +49,7 @@ callback = None
 run_name = 'dummy'
 log_wandb = not args.debug
 
-algo = dict(PPO=PPO, AWR=AWR)[args.algo]
+algo = dict(PPO=PPO, AWR=AWR, PAWR=PAWR)[args.algo]
 config = dict(
     total_timesteps=args.total_timesteps,
 )
@@ -65,6 +66,7 @@ policy_config = dict(
     target_kl=args.target_kl,
     learning_rate_schedule=args.learning_rate_schedule,
     max_grad_norm=args.max_grad_norm,
+    awr_coef=args.awr_coef,
 )
 
 if log_wandb:
@@ -87,6 +89,9 @@ model = algo("MlpPolicy", env, verbose=1, run_name=run_name, tensorboard_log=f"r
 model.learn(**config, callback=callback)
 if log_wandb:
     run.finish()
+
+# import pickle
+# with open('good_ppo_data_reacher.pkl', 'wb') as file: pickle.dump(model.rollout_buffer, file)
 
 ## Gif
 vec_env = model.get_env()

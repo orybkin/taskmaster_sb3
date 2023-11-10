@@ -748,6 +748,33 @@ class ActorCriticPolicy(BasePolicy):
         return self.value_net(latent_vf)
 
 
+class Actor2CriticsPolicy(ActorCriticPolicy):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def _build(self, lr_schedule: Schedule) -> None:
+        super()._build(lr_schedule)
+
+        self.value_net2 = nn.Linear(self.mlp_extractor.latent_dim_vf, 1)
+        if self.ortho_init:
+            self.value_net2.apply(partial(self.init_weights, gain=1))
+
+    def predict_values2(self, obs: th.Tensor) -> th.Tensor:
+        """
+        Get the estimated values according to the current policy given the observations.
+
+        :param obs: Observation
+        :return: the estimated values.
+        """
+        features = super().extract_features(obs, self.vf_features_extractor)
+        latent_vf = self.mlp_extractor.forward_critic(features)
+        return self.value_net2(latent_vf)
+    
+    @property
+    def predict_values_arr(self):
+        return [self.predict_values, self.predict_values2]
+
+
 class ActorCriticCnnPolicy(ActorCriticPolicy):
     """
     CNN policy class for actor-critic algorithms (has both policy and value prediction).
