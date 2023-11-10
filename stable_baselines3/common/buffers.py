@@ -346,10 +346,14 @@ class MixedBuffer(BaseBuffer):
         self.buffer_size = buffer1.buffer_size = buffer2.buffer_size
         self.n_envs = buffer1.n_envs
 
+    @property
+    def advantages(self):
+        return np.concatenate([self.buffer1.advantages, self.buffer2.advantages], 0)
+
     def get(self, batch_size: Optional[int] = None) -> Generator[RolloutBufferSamples, None, None]:
         start_idx = 0
-        batch1_gen = self.buffer1.get(int(batch_size * self.ratio))
-        batch2_gen = self.buffer2.get(int(batch_size * (1 - self.ratio)))
+        batch1_gen = self.buffer1.get(int(batch_size * self.ratio * 2))
+        batch2_gen = self.buffer2.get(int(batch_size * (1 - self.ratio) * 2))
         shuffle = th.randperm(batch_size)
         while start_idx < self.buffer_size * self.n_envs:
             batch1 = next(batch1_gen)

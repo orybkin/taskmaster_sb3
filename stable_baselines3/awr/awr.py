@@ -252,7 +252,12 @@ class AWR(OnPolicyAlgorithm):
         entropy_losses = []
         pg_losses, value_losses = [], []
         clip_fractions = []
-        metrics = dict(advantages_mean=[], advantages_std=[])
+        metrics = dict(advantages_mean=[], advantages_std=[], log_prob=[], grad_norm=[])
+
+        if self.normalize_advantage and len(actor_buffer.advantages) > 1:
+            bs = actor_buffer.buffer_size
+            buffer_adv_mean = actor_buffer.advantages[-bs:].mean()
+            buffer_adv_std = actor_buffer.advantages[-bs:].std()
 
         continue_training = True
         # train for n_epochs epochs
@@ -275,12 +280,11 @@ class AWR(OnPolicyAlgorithm):
 
                 # Normalize advantage
                 advantages = actor_data.advantages
+                adv_mean = advantages.mean()
+                adv_std = advantages.std()
                 # Normalization does not make sense if mini batchsize == 1, see GH issue #325
                 if self.normalize_advantage and len(advantages) > 1:
-                    bs = self.batch_size
-                    adv_mean = advantages.mean()
-                    adv_std = advantages.std()
-                    advantages = (advantages - advantages[-bs:].mean()) / (advantages[-bs:].std() + 1e-8)
+                    advantages = (advantages - buffer_adv_mean) / (buffer_adv_std + 1e-8)
 
                 # ratio between old and new policy, should be one at the first iteration
                 ratio = th.exp(log_prob - actor_data.old_log_prob)
@@ -297,6 +301,7 @@ class AWR(OnPolicyAlgorithm):
                 # Logging
                 metrics['advantages_mean'].append(adv_mean.item())
                 metrics['advantages_std'].append(adv_std.item())
+                metrics['log_prob'].append(log_prob.mean().item())
                 pg_losses.append(policy_loss.item())
                 clip_fraction = th.mean((th.abs(ratio - 1) > clip_range).float()).item()
                 clip_fractions.append(clip_fraction)
@@ -335,7 +340,7 @@ class AWR(OnPolicyAlgorithm):
                     approx_kl_div = th.mean((th.exp(log_ratio) - 1) - log_ratio).cpu().numpy()
                     approx_kl_divs.append(approx_kl_div)
 
-                if self.target_kl is not None and approx_kl_div > 1.5 * self.target_kl:
+                if self.learning_rate_schedule != 'adaptive' and self.target_kl is not None and approx_kl_div > 1.5 * self.target_kl:
                     continue_training = False
                     if self.verbose >= 1:
                         print(f"Early stopping at step {epoch} due to reaching max kl: {approx_kl_div:.2f}")
@@ -345,12 +350,18 @@ class AWR(OnPolicyAlgorithm):
                 self.policy.optimizer.zero_grad()
                 loss.backward()
                 # Clip grad norm
-                th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+                grad = [th.linalg.vector_norm(p.grad.detach()) for p in self.policy.parameters() if p.grad is not None]
+                grad = th.linalg.vector_norm(th.stack(grad))
+                metrics['grad_norm'].append(grad.item())
+                if self.max_grad_norm:
+                    th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
                 self.policy.optimizer.step()
 
             self._n_updates += 1
             if not continue_training:
                 break
+
+            self.change_learning_rate(approx_kl_div)
 
         explained_var = explained_variance(self.rollout_buffer.values.flatten(), self.rollout_buffer.returns.flatten())
 
