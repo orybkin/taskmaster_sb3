@@ -218,7 +218,9 @@ class AWR(OnPolicyAlgorithm):
         relabeled_buffer.returns = np.zeros_like(relabeled_buffer.returns)
         relabeled_buffer.advantages = np.zeros_like(relabeled_buffer.advantages)
         with th.no_grad():
-            obs_tensor = obs_as_tensor(self._last_obs, self.device)
+            last_obs = self._last_obs.copy()
+            last_obs[:, -2:] = relabeled_buffer.observations[0, :, -2:]
+            obs_tensor = obs_as_tensor(last_obs, self.device)
             values = self.policy.predict_values(obs_tensor)  
             relabeled_buffer.compute_returns_and_advantage(last_values=values, dones=self._last_episode_starts)
 
