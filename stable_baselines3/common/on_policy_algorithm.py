@@ -89,6 +89,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         relabel_ratio: float = 0,
         relabel_actor: bool = True,
         relabel_critic: bool = True,
+        learning_rate_schedule: str = "",
         **kwargs
     ):
         super().__init__(
@@ -119,6 +120,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         self.relabel_critic = relabel_critic
         self.rollout_buffer_class = rollout_buffer_class
         self.rollout_buffer_kwargs = rollout_buffer_kwargs or {}
+        self.learning_rate_schedule = learning_rate_schedule
 
         if _init_setup_model:
             self._setup_model()
@@ -264,6 +266,16 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         """
         raise NotImplementedError
 
+    def change_learning_rate(self, kl_dist):
+        if self.learning_rate_schedule == 'adaptive':
+            min_lr = 1e-6
+            max_lr = 1e-2
+
+            if kl_dist > (2.0 * self.target_kl):
+                self.learning_rate = max(self.learning_rate / 1.5, min_lr)
+            if kl_dist < (0.5 * self.target_kl):
+                self.learning_rate = min(self.learning_rate * 1.5, max_lr)
+
     def learn(
         self: SelfOnPolicyAlgorithm,
         total_timesteps: int,
@@ -321,16 +333,16 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             if iteration % 10 == 0:
                 ## Execution
 
-                vec_env = self.get_env()
-                obs = vec_env.reset()
-                vid = []
-                for i in range(50):
-                    action, _states = self.predict(obs, deterministic=True)
-                    obs, reward, done, info = vec_env.step(action)
-                    vid.append(vec_env.render())
+                # vec_env = self.get_env()
+                # obs = vec_env.reset()
+                # vid = []
+                # for i in range(50):
+                #     action, _states = self.predict(obs, deterministic=True)
+                #     obs, reward, done, info = vec_env.step(action)
+                #     vid.append(vec_env.render())
 
-                imageio.mimwrite(f'gifs/{self.run_name}_{iteration}.gif', np.stack(vid, 0).astype(np.uint8))
-                self.logger.record("execution", Video(np.stack(vid, 0)[None].transpose([0, 1, 4, 2, 3]), 10), exclude='stdout')
+                # imageio.mimwrite(f'gifs/{self.run_name}_{iteration}.gif', np.stack(vid, 0).astype(np.uint8))
+                # self.logger.record("execution", Video(np.stack(vid, 0)[None].transpose([0, 1, 4, 2, 3]), 10), exclude='stdout')
 
                 ## Value vis
                 n_goal_vis = 100

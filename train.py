@@ -25,15 +25,25 @@ parser.add_argument('--total_timesteps', type=int, default=5_000_000)
 parser.add_argument('--learning_rate', type=float, default=3e-4)
 parser.add_argument('--ent_coef', type=float, default=2e-4)
 parser.add_argument('--temperature', type=float, default=0.2)
+parser.add_argument('--target_kl', type=float, default=None)
+parser.add_argument('--max_grad_norm', type=float, default=0.5)
 parser.add_argument('--n_steps', type=int, default=32768)
+parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('--algo', type=str, default='PPO')
+parser.add_argument('--env_name', type=str, default='Reacher-v4')
+parser.add_argument('--learning_rate_schedule', type=str, default='')
 args = parser.parse_args()
+
+if args.env_name == 'Reacher-v4':
+    env_kwargs = dict(render_mode='rgb_array', width=128, height=128)
+else:
+    env_kwargs = dict()
 
 n_envs = args.n_envs
 if not args.debug:
-    env = SubprocVecEnv([lambda: Monitor(gym.make("Reacher-v4", render_mode='rgb_array', width=128, height=128))] * n_envs, 'fork')
+    env = SubprocVecEnv([lambda: Monitor(gym.make(args.env_name, **env_kwargs))] * n_envs, 'fork')
 else:
-    env = DummyVecEnv([lambda: Monitor(gym.make("Reacher-v4", render_mode='rgb_array', width=128, height=128))] * n_envs)
+    env = DummyVecEnv([lambda: Monitor(gym.make(args.env_name, **env_kwargs))] * n_envs)
 callback = None
 run_name = 'dummy'
 log_wandb = not args.debug
@@ -46,12 +56,15 @@ policy_config = dict(
     n_steps=args.n_steps // n_envs,
     learning_rate=args.learning_rate,
     n_epochs=10,
-    batch_size=64,
+    batch_size=args.batch_size,
     temperature=args.temperature,
     ent_coef=args.ent_coef,
     relabel_ratio=args.relabel_ratio,
     relabel_actor=args.relabel_actor,
     relabel_critic=args.relabel_critic,
+    target_kl=args.target_kl,
+    learning_rate_schedule=args.learning_rate_schedule,
+    max_grad_norm=args.max_grad_norm,
 )
 
 if log_wandb:
@@ -80,7 +93,7 @@ vec_env = model.get_env()
 for i in range(n_envs):
     obs = vec_env.reset()
     vid = []
-    for i in range(1000):
+    for i in range(50):
         action, _states = model.predict(obs, deterministic=True)
         obs, reward, done, info = vec_env.step(action)
         vid.append(vec_env.render())

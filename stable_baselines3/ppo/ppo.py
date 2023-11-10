@@ -1,5 +1,6 @@
 import warnings
 from typing import Any, ClassVar, Dict, Optional, Type, TypeVar, Union
+from collections import defaultdict
 
 import numpy as np
 import torch as th
@@ -105,6 +106,7 @@ class PPO(OnPolicyAlgorithm):
         seed: Optional[int] = None,
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
+        **kwargs
     ):
         super().__init__(
             policy,
@@ -133,6 +135,7 @@ class PPO(OnPolicyAlgorithm):
                 spaces.MultiDiscrete,
                 spaces.MultiBinary,
             ),
+            **kwargs,
         )
 
         # Sanity check, otherwise it will lead to noisy gradient and NaN
@@ -198,6 +201,7 @@ class PPO(OnPolicyAlgorithm):
         entropy_losses = []
         pg_losses, value_losses = [], []
         clip_fractions = []
+        metrics = defaultdict(list)
 
         continue_training = True
         # train for n_epochs epochs
@@ -268,7 +272,7 @@ class PPO(OnPolicyAlgorithm):
                     approx_kl_div = th.mean((th.exp(log_ratio) - 1) - log_ratio).cpu().numpy()
                     approx_kl_divs.append(approx_kl_div)
 
-                if self.target_kl is not None and approx_kl_div > 1.5 * self.target_kl:
+                if self.learning_rate_schedule != 'adaptive' and self.target_kl is not None and approx_kl_div > 1.5 * self.target_kl:
                     continue_training = False
                     if self.verbose >= 1:
                         print(f"Early stopping at step {epoch} due to reaching max kl: {approx_kl_div:.2f}")
@@ -278,16 +282,19 @@ class PPO(OnPolicyAlgorithm):
                 self.policy.optimizer.zero_grad()
                 loss.backward()
                 # Clip grad norm
+                grad = [th.linalg.vector_norm(p.grad.detach()) for p in self.policy.parameters() if p.grad is not None]
+                grad = th.linalg.vector_norm(th.stack(grad))
+                metrics['grad_norm'].append(grad.item())
                 th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
                 self.policy.optimizer.step()
 
-            self._n_updates += 1
-            if not continue_training:
-                break
+            self.change_learning_rate(approx_kl_div)
 
         explained_var = explained_variance(self.rollout_buffer.values.flatten(), self.rollout_buffer.returns.flatten())
 
         # Logs
+        for key, vals in metrics.items():
+            self.logger.record(f"train/{key}", np.mean(vals))
         self.logger.record("train/entropy_loss", np.mean(entropy_losses))
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         self.logger.record("train/value_loss", np.mean(value_losses))
