@@ -110,6 +110,7 @@ setup(
         # Plotting learning curves
         "matplotlib",
         "moviepy",
+        "gymnasium-robotics",
     ],
     extras_require={
         "tests": [
