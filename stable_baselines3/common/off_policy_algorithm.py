@@ -5,6 +5,7 @@ import time
 import warnings
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
+from collections import defaultdict
 
 import numpy as np
 import torch as th
@@ -135,6 +136,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         self.replay_buffer_class = replay_buffer_class
         self.replay_buffer_kwargs = replay_buffer_kwargs or {}
         self._episode_storage = None
+        self.diagnostics = defaultdict(list)
 
         # Save train freq parameter, will be converted later to TrainFreq object
         self.train_freq = train_freq
@@ -320,6 +322,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         callback.on_training_start(locals(), globals())
 
         while self.num_timesteps < total_timesteps:
+            time_start = time.time()
             rollout = self.collect_rollouts(
                 self.env,
                 train_freq=self.train_freq,
@@ -330,6 +333,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
                 log_interval=log_interval,
             )
 
+            time_collect = time.time()
             if not rollout.continue_training:
                 break
 
@@ -340,6 +344,9 @@ class OffPolicyAlgorithm(BaseAlgorithm):
                 # Special case when the user passes `gradient_steps=0`
                 if gradient_steps > 0:
                     self.train(batch_size=self.batch_size, gradient_steps=gradient_steps)
+            time_train = time.time()
+            self.diagnostics['train_time'].append(time_train - time_collect)
+            self.diagnostics['collect_time'].append(time_collect - time_start)
 
         callback.on_training_end()
 
@@ -413,6 +420,10 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         self.logger.record("time/fps", fps)
         self.logger.record("time/time_elapsed", int(time_elapsed))
         self.logger.record("time/total_timesteps", self.num_timesteps)
+        for key, value in self.diagnostics.items():
+            if np.isnan(safe_mean(value)): continue
+            self.logger.record(f'diagnostics/{key}', safe_mean(value))  
+            self.diagnostics[key] = []
         if self.use_sde:
             self.logger.record("train/std", (self.actor.get_std()).mean().item())
 
@@ -585,6 +596,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
 
                     # Log training infos
                     if log_interval is not None and self._episode_num % log_interval == 0:
+                        print(self.tensorboard_log)
                         self._dump_logs()
         callback.on_rollout_end()
 

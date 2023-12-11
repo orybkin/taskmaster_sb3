@@ -8,8 +8,7 @@ import numpy as np
 from tensorboardX.utils import _prepare_video
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3 import HerReplayBuffer, DDPG, DQN, SAC, TD3
-from stable_baselines3.her.goal_selection_strategy import GoalSelectionStrategy
-from stable_baselines3.common.envs import BitFlippingEnv
+from stable_baselines3.common.noise import NormalActionNoise
 import wandb
 from wandb.integration.sb3 import WandbCallback
 from stable_baselines3.common.monitor import Monitor
@@ -24,16 +23,22 @@ parser.add_argument('--relabel_actor', type=int, default=1)
 parser.add_argument('--relabel_critic', type=int, default=1)
 parser.add_argument('--relabel_ratio', type=float, default=.0)
 parser.add_argument('--debug', type=int, default=0)
-parser.add_argument('--total_timesteps', type=int, default=5_000_000)
+parser.add_argument('--total_timesteps', type=int, default=1_000_000)
+parser.add_argument('--learning_starts', type=int, default=100)
 parser.add_argument('--learning_rate', type=float, default=3e-4)
-parser.add_argument('--ent_coef', type=float, default=2e-4)
+parser.add_argument('--ent_coef', type=str, default='2e-4')
+parser.add_argument('--action_noise', type=float, default=0)
 parser.add_argument('--awr_coef', type=float, default=1.0)
 parser.add_argument('--temperature', type=float, default=0.2)
 parser.add_argument('--target_kl', type=float, default=None)
 parser.add_argument('--max_grad_norm', type=float, default=0.5)
+parser.add_argument('--gamma', type=float, default=0.99)
+parser.add_argument('--tau', type=float, default=0.005)
 parser.add_argument('--n_steps', type=int, default=32768)
+parser.add_argument('--buffer_size', type=int, default=1_000_000)
+parser.add_argument('--gradient_steps', type=int, default=1)
 parser.add_argument('--batch_size', type=int, default=64)
-parser.add_argument('--algo', type=str, default='TD3')
+parser.add_argument('--algo', type=str, default='SAC')
 parser.add_argument('--her', type=int, default=0)
 parser.add_argument('--env_name', type=str, default='FetchReach-v2')
 parser.add_argument('--learning_rate_schedule', type=str, default='')
@@ -42,7 +47,7 @@ args = parser.parse_args()
 if args.env_name == 'Reacher-v4':
     env_kwargs = dict(render_mode='rgb_array', width=128, height=128)
 elif 'Fetch' in args.env_name:
-    env_kwargs = dict(render_mode='rgb_array', width=128, height=128, max_episode_steps=100)
+    env_kwargs = dict(render_mode='rgb_array', width=128, height=128, max_episode_steps=50)
 else:
     env_kwargs = dict()
 
@@ -56,25 +61,18 @@ callback = None
 run_name = 'dummy'
 log_wandb = not args.debug
 
-algo = dict(PPO=PPO, AWR=AWR, PAWR=PAWR, TD3=TD3)[args.algo]
+algo = dict(PPO=PPO, AWR=AWR, PAWR=PAWR, TD3=TD3, SAC=SAC)[args.algo]
 config = dict(
     total_timesteps=args.total_timesteps,
 )
-policy_config = dict(
-    n_steps=args.n_steps // n_envs,
-    learning_rate=args.learning_rate,
-    n_epochs=10,
-    batch_size=args.batch_size,
-    temperature=args.temperature,
-    ent_coef=args.ent_coef,
-    relabel_ratio=args.relabel_ratio,
-    relabel_actor=args.relabel_actor,
-    relabel_critic=args.relabel_critic,
-    target_kl=args.target_kl,
-    learning_rate_schedule=args.learning_rate_schedule,
-    max_grad_norm=args.max_grad_norm,
-    awr_coef=args.awr_coef,
-)
+
+policy_config = args.__dict__.copy()
+policy_config['n_steps'] = args.n_steps // n_envs
+policy_config['train_freq'] = 1
+policy_config['n_epochs'] = 10
+policy_config['action_noise'] = NormalActionNoise(mean=np.zeros_like(env.action_space.low), sigma=args.action_noise * (env.action_space.high - env.action_space.low))
+if args.her: policy_config['policy_kwargs'] = dict(net_arch=[256, 256, 256], n_critics=2)
+for a in ['env_name', 'debug', 'total_timesteps', 'algo', 'her']: policy_config.pop(a)
 
 if args.her:
     policy_config.update(dict(
@@ -91,7 +89,7 @@ if log_wandb:
     wandb_config['buffer_size'] = policy_config['n_steps'] * n_envs
     wandb_config['n_envs'] = n_envs
     wandb_config.update(policy_config)
-    wandb_config.update(args)
+    wandb_config.update(args.__dict__)
     run = wandb.init(
         project="taskmaster_sb3",
         config=wandb_config,
@@ -100,7 +98,7 @@ if log_wandb:
         # save_code=True,  # optional
     )
     run_name = datetime.now().strftime("%Y%m%d-%H%M%S-") + run.name
-    callback = WandbCallback(model_save_path=f"models/{run_name}",verbose=2,))
+    callback = WandbCallback(model_save_path=f"models/{run_name}",verbose=2,)
 
 model = algo("MultiInputPolicy", env, verbose=1, run_name=run_name, tensorboard_log=f"runs/{run_name}",
               **policy_config)
@@ -125,6 +123,5 @@ imageio.mimwrite(f'gifs/{run_name}.gif', np.stack(vid, 0).astype(np.uint8))
     # VecEnv resets automatically
     # if done:
     #   obs = env.reset()
-import pdb; pdb.set_trace()
 
 vec_env.close()
