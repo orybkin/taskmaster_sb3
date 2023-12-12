@@ -1,0 +1,16 @@
+# singularity build --fakeroot taskmaster_sb3.sif taskmaster_sb3.def
+# singularity shell --nv taskmaster_sb3.sif
+# This image is partially taken from the official isaac gym dockerfile and supports headless rendering
+Bootstrap: docker
+From: nvidia/cuda:11.8.0-cudnn8-devel-ubuntu20.04
+
+# Container setup
+%post -c /bin/bash 
+    apt-get update
+    apt-get install mesa-utils -y
+    apt-get install libegl1-mesa libegl1-mesa-dev -y
+    apt-get install wget parallel vim -y
+    apt-get install libosmesa6 libosmesa6-dev -y
+
+
+
