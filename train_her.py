@@ -1,5 +1,8 @@
 import os
 os.environ['MUJOCO_GL']='egl'
+os.environ['MUJOCO_GL']='osmesa'
+if 'SLURM_STEP_GPUS' in os.environ:
+    os.environ['EGL_DEVICE_ID'] = os.environ['SLURM_STEP_GPUS']
 
 import gymnasium as gym
 from stable_baselines3 import PPO, AWR, PAWR
@@ -39,11 +42,13 @@ parser.add_argument('--buffer_size', type=int, default=1_000_000)
 parser.add_argument('--gradient_steps', type=int, default=1)
 parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('--algo', type=str, default='SAC')
+parser.add_argument('--net_arch', type=str, default='', choices=['', 'large'])
 parser.add_argument('--her', type=int, default=0)
 parser.add_argument('--env_name', type=str, default='FetchReach-v2')
+parser.add_argument('--device', type=str, default='auto')
 parser.add_argument('--learning_rate_schedule', type=str, default='')
 args = parser.parse_args()
-
+    
 if args.env_name == 'Reacher-v4':
     env_kwargs = dict(render_mode='rgb_array', width=128, height=128)
 elif 'Fetch' in args.env_name:
@@ -71,8 +76,9 @@ policy_config['n_steps'] = args.n_steps // n_envs
 policy_config['train_freq'] = 1
 policy_config['n_epochs'] = 10
 policy_config['action_noise'] = NormalActionNoise(mean=np.zeros_like(env.action_space.low), sigma=args.action_noise * (env.action_space.high - env.action_space.low))
+if args.net_arch == 'large': policy_config['policy_kwargs'] = dict(net_arch=[256, 256, 256])
 if args.her: policy_config['policy_kwargs'] = dict(net_arch=[256, 256, 256], n_critics=2)
-for a in ['env_name', 'debug', 'total_timesteps', 'algo', 'her']: policy_config.pop(a)
+for a in ['env_name', 'debug', 'total_timesteps', 'algo', 'her', 'net_arch']: policy_config.pop(a)
 
 if args.her:
     policy_config.update(dict(

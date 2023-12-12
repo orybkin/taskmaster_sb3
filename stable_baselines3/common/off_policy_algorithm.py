@@ -5,7 +5,6 @@ import time
 import warnings
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
-from collections import defaultdict
 
 import numpy as np
 import torch as th
@@ -136,7 +135,6 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         self.replay_buffer_class = replay_buffer_class
         self.replay_buffer_kwargs = replay_buffer_kwargs or {}
         self._episode_storage = None
-        self.diagnostics = defaultdict(list)
 
         # Save train freq parameter, will be converted later to TrainFreq object
         self.train_freq = train_freq
@@ -407,31 +405,6 @@ class OffPolicyAlgorithm(BaseAlgorithm):
             action = buffer_action
         return action, buffer_action
 
-    def _dump_logs(self) -> None:
-        """
-        Write log.
-        """
-        time_elapsed = max((time.time_ns() - self.start_time) / 1e9, sys.float_info.epsilon)
-        fps = int((self.num_timesteps - self._num_timesteps_at_start) / time_elapsed)
-        self.logger.record("time/episodes", self._episode_num)
-        if len(self.ep_info_buffer) > 0 and len(self.ep_info_buffer[0]) > 0:
-            self.logger.record("rollout/ep_rew_mean", safe_mean([ep_info["r"] for ep_info in self.ep_info_buffer]))
-            self.logger.record("rollout/ep_len_mean", safe_mean([ep_info["l"] for ep_info in self.ep_info_buffer]))
-        self.logger.record("time/fps", fps)
-        self.logger.record("time/time_elapsed", int(time_elapsed))
-        self.logger.record("time/total_timesteps", self.num_timesteps)
-        for key, value in self.diagnostics.items():
-            if np.isnan(safe_mean(value)): continue
-            self.logger.record(f'diagnostics/{key}', safe_mean(value))  
-            self.diagnostics[key] = []
-        if self.use_sde:
-            self.logger.record("train/std", (self.actor.get_std()).mean().item())
-
-        if len(self.ep_success_buffer) > 0:
-            self.logger.record("rollout/success_rate", safe_mean(self.ep_success_buffer))
-        # Pass the number of timesteps for tensorboard
-        self.logger.dump(step=self.num_timesteps)
-
     def _on_step(self) -> None:
         """
         Method called after each step in the environment.
@@ -597,6 +570,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
                     # Log training infos
                     if log_interval is not None and self._episode_num % log_interval == 0:
                         print(self.tensorboard_log)
+                        self.logger.record("time/episodes", self._episode_num)
                         self._dump_logs()
         callback.on_rollout_end()
 

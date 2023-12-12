@@ -7,6 +7,8 @@ import warnings
 from abc import ABC, abstractmethod
 from collections import deque
 from typing import Any, ClassVar, Dict, Iterable, List, Optional, Tuple, Type, TypeVar, Union
+from collections import defaultdict
+import sys
 
 import gymnasium as gym
 import numpy as np
@@ -20,6 +22,7 @@ from stable_baselines3.common.logger import Logger
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.policies import BasePolicy
+from stable_baselines3.common.utils import safe_mean, should_collect_more_steps
 from stable_baselines3.common.preprocessing import check_for_nested_spaces, is_image_space, is_image_space_channels_first
 from stable_baselines3.common.save_util import load_from_zip_file, recursive_getattr, recursive_setattr, save_to_zip_file
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule, TensorDict
@@ -162,6 +165,7 @@ class BaseAlgorithm(ABC):
         self._custom_logger = False
         self.env: Optional[VecEnv] = None
         self._vec_normalize_env: Optional[VecNormalize] = None
+        self.diagnostics = defaultdict(list)
 
         # Create and wrap the env if needed
         if env is not None:
@@ -840,3 +844,31 @@ class BaseAlgorithm(ABC):
         params_to_save = self.get_parameters()
 
         save_to_zip_file(path, data=data, params=params_to_save, pytorch_variables=pytorch_variables)
+
+    def _dump_logs(self) -> None:
+        """
+        Write log.
+        """
+        time_elapsed = max((time.time_ns() - self.start_time) / 1e9, sys.float_info.epsilon)
+        fps = int((self.num_timesteps - self._num_timesteps_at_start) / time_elapsed)
+        if len(self.ep_info_buffer) > 0 and len(self.ep_info_buffer[0]) > 0:
+            self.logger.record("rollout/ep_rew_mean", safe_mean([ep_info["r"] for ep_info in self.ep_info_buffer]))
+            self.logger.record("rollout/ep_len_mean", safe_mean([ep_info["l"] for ep_info in self.ep_info_buffer]))
+            for k in self.ep_info_buffer[0]:
+                if k == 'r' or k == 'l': continue
+                self.logger.record(f"rollout/{k}", safe_mean([ep_info[k] for ep_info in self.ep_info_buffer]))
+
+        self.logger.record("time/fps", fps)
+        self.logger.record("time/time_elapsed", int(time_elapsed))
+        self.logger.record("time/total_timesteps", self.num_timesteps)
+        for key, value in self.diagnostics.items():
+            if np.isnan(safe_mean(value)): continue
+            self.logger.record(f'diagnostics/{key}', safe_mean(value))  
+            self.diagnostics[key] = []
+        if self.use_sde:
+            self.logger.record("train/std", (self.actor.get_std()).mean().item())
+    
+        if len(self.ep_success_buffer) > 0:
+            self.logger.record("rollout/success_rate", safe_mean(self.ep_success_buffer))
+        # Pass the number of timesteps for tensorboard
+        self.logger.dump(step=self.num_timesteps)

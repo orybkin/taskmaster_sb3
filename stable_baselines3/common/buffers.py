@@ -351,6 +351,12 @@ class MixedBuffer(BaseBuffer):
         return np.concatenate([self.buffer1.advantages, self.buffer2.advantages], 0)
 
     def get(self, batch_size: Optional[int] = None) -> Generator[RolloutBufferSamples, None, None]:
+        def cat(x, y):
+            if isinstance(x, dict):
+                return {k: th.cat([x[k], y[k]], 0) for k in x.keys()}
+            else:
+                return th.cat([x, y], 0)
+            
         start_idx = 0
         batch1_gen = self.buffer1.get(int(batch_size * self.ratio * 2))
         batch2_gen = self.buffer2.get(int(batch_size * (1 - self.ratio) * 2))
@@ -359,7 +365,7 @@ class MixedBuffer(BaseBuffer):
             batch1 = next(batch1_gen)
             batch2 = next(batch2_gen)
             # merged_batch = type(batch1)(*[th.cat([batch1[i], batch2[i]], 0)[shuffle] for i in range(len(batch1))])
-            merged_batch = type(batch1)(*[th.cat([batch1[i], batch2[i]], 0) for i in range(len(batch1))])
+            merged_batch = type(batch1)(*[cat(batch1[i], batch2[i]) for i in range(len(batch1))])
             yield merged_batch
             start_idx += batch_size
 

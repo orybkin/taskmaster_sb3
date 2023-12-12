@@ -113,7 +113,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         self.n_steps = n_steps
         self.gamma = gamma
         self.gae_lambda = gae_lambda
-        self.ent_coef = ent_coef
+        self.ent_coef = float(ent_coef)
         self.vf_coef = vf_coef
         self.max_grad_norm = max_grad_norm
         self.relabel_ratio = relabel_ratio
@@ -290,35 +290,52 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         idx = original_buffer.episode_starts.astype(int)
         init_idx = idx.argmax(0)
         idx = idx.cumsum(0) * 50 - 1 + init_idx[None, :] # TODO  this is hardcoded for now
-        idx = np.minimum(idx, obs.shape[0] - 1)
-        goals = np.take_along_axis(obs, idx[:, :, None], 0)
-        # Rewards and observations. Note - these are specific to reacher
-        # goal_idx = np.random.randint(original_buffer.observations.shape[1], size=original_buffer.observations.shape[0])
-        # goal_obs = np.take_along_axis(original_buffer.observations, goal_idx[:, None, None], 1)
-        # relabeled_buffer.observations[..., -2:] = goal_obs[:, :, -4:-2]
-        relabeled_buffer.observations[..., -2:] = goals[:, :, -4:-2]
-        goal = relabeled_buffer.observations[..., -2:]
-        pos = relabeled_buffer.observations[..., -4:-2]
+        idx = np.minimum(idx, self.n_steps - 1)
+        if isinstance(obs, dict):
+            last_obs = self._last_obs.copy()
+            last_obs['desired_goal'] = relabeled_buffer.observations['achieved_goal'][-1]
+            relabeled_buffer.observations['desired_goal'] = obs['achieved_goal']
+            goal = relabeled_buffer.observations['desired_goal']
+            pos = relabeled_buffer.observations['achieved_goal']
+            goal = np.concatenate([goal[1:], last_obs['desired_goal'][None]], 0)
+            pos = np.concatenate([pos[1:], last_obs['achieved_goal'][None]], 0)
+            relabeled_buffer.rewards = self.env.env_method("compute_reward", pos, goal, None, indices=[0])[0]
 
-        relabeled_buffer.rewards = -np.linalg.norm(pos - goal, axis=-1) > -0.02
-        last_obs = self._last_obs.copy()
-        last_obs[:, -2:] = relabeled_buffer.observations[-1, :, -2:]
+        else:
+            goals = np.take_along_axis(obs, idx[:, :, None], 0)
+            # Rewards and observations. Note - these are specific to reacher
+            # goal_idx = np.random.randint(original_buffer.observations.shape[1], size=original_buffer.observations.shape[0])
+            # goal_obs = np.take_along_axis(original_buffer.observations, goal_idx[:, None, None], 1)
+            # relabeled_buffer.observations[..., -2:] = goal_obs[:, :, -4:-2]
+            relabeled_buffer.observations[..., -2:] = goals[:, :, -4:-2]
+            goal = relabeled_buffer.observations[..., -2:]
+            pos = relabeled_buffer.observations[..., -4:-2]
+
+            relabeled_buffer.rewards = -np.linalg.norm(pos - goal, axis=-1) > -0.02
+            last_obs = self._last_obs.copy()
+            last_obs[:, -2:] = relabeled_buffer.observations[-1, :, -2:]
         self.update_values(relabeled_buffer, last_obs)
 
         self.relabeled_buffer = relabeled_buffer
 
     def update_values(self, buffer, last_obs):
+        def flatten(x):
+            if isinstance(x, dict):
+                return {k: v.flatten(0, 1) for k, v in x.items()}
+            else:
+                return x.flatten(0, 1)
+
         with th.no_grad():
             obs_tensor = obs_as_tensor(buffer.observations, self.device)
             act_tensor = obs_as_tensor(buffer.actions, self.device)
-            distribution = self.policy.get_distribution(obs_tensor.flatten(0,1))
+            distribution = self.policy.get_distribution(flatten(obs_tensor))
             log_probs = distribution.log_prob(act_tensor.flatten(0,1))
-            buffer.log_probs = log_probs.reshape(list(obs_tensor.shape[:2])).cpu().numpy()
+            buffer.log_probs = log_probs.reshape(list(act_tensor.shape[:2])).cpu().numpy()
 
         # Values. Is there a cleaner way to do this?
         with th.no_grad():
-            values = self.policy.predict_values(obs_tensor.flatten(0,1))
-            buffer.values = values.reshape(list(obs_tensor.shape[:2])).cpu().numpy()
+            values = self.policy.predict_values(flatten(obs_tensor))
+            buffer.values = values.reshape(list(act_tensor.shape[:2])).cpu().numpy()
             
         # Returns and advantages
         buffer.returns = np.zeros_like(buffer.returns)
@@ -352,7 +369,10 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         assert self.env is not None
 
         while self.num_timesteps < total_timesteps:
+            # time this
+            time_start = time.time()
             continue_training = self.collect_rollouts(self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps)
+            time_collected = time.time()
 
             if not continue_training:
                 break
@@ -367,21 +387,8 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             # Display training infos
             print(self.tensorboard_log)
             if log_interval is not None and iteration % log_interval == 0:
-                assert self.ep_info_buffer is not None
-                time_elapsed = max((time.time_ns() - self.start_time) / 1e9, sys.float_info.epsilon)
-                fps = int((self.num_timesteps - self._num_timesteps_at_start) / time_elapsed)
                 self.logger.record("time/iterations", iteration)
-                if len(self.ep_info_buffer) > 0 and len(self.ep_info_buffer[0]) > 0:
-                    self.logger.record("rollout/ep_rew_mean", safe_mean([ep_info["r"] for ep_info in self.ep_info_buffer]))
-                    self.logger.record("rollout/ep_len_mean", safe_mean([ep_info["l"] for ep_info in self.ep_info_buffer]))
-                    for k in self.ep_info_buffer[0]:
-                        if k == 'r' or k == 'l': continue
-                        self.logger.record(f"rollout/{k}", safe_mean([ep_info[k] for ep_info in self.ep_info_buffer]))
-
-                self.logger.record("time/fps", fps)
-                self.logger.record("time/time_elapsed", int(time_elapsed))
-                self.logger.record("time/total_timesteps", self.num_timesteps)
-                self.logger.dump(step=self.num_timesteps)
+                self._dump_logs()
 
 
                 actor_buffer = critic_buffer = self.rollout_buffer
@@ -397,9 +404,12 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                 self.critic_buffer = critic_buffer
 
             self.train()
+            time_trained = time.time()
+            self.diagnostics['time_collect'].append(time_collected - time_start)
+            self.diagnostics['time_train'].append(time_trained - time_collected)
 
             # Log images
-            if iteration % 10 == 0:
+            if iteration % 10 == 0 and False:
                 ## Execution
 
                 # vec_env = self.get_env()
