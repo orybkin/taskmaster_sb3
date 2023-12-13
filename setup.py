@@ -103,6 +103,9 @@ setup(
         "gymnasium>=0.28.1,<0.30",
         "numpy>=1.20",
         "torch>=1.13",
+        "wandb",
+        "tensorboard",
+        "tensorboardx",
         # For saving models
         "cloudpickle",
         # For reading logs
