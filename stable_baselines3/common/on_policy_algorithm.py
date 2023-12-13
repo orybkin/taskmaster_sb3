@@ -232,7 +232,9 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                     and infos[idx].get("terminal_observation") is not None
                     and infos[idx].get("TimeLimit.truncated", False)
                 ):
-                    terminal_obs = self.policy.obs_to_tensor(infos[idx]["terminal_observation"])[0]
+                    # terminal_obs = self.policy.obs_to_tensor(infos[idx]["terminal_observation"])[0]
+                    # for simplicity let's discard the true terminal obs
+                    terminal_obs = self.policy.obs_to_tensor(self._last_obs)[0]
                     with th.no_grad():
                         terminal_value = self.policy.predict_values(terminal_obs)[0]  # type: ignore[arg-type]
                     rewards[idx] += self.gamma * terminal_value
@@ -294,7 +296,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         if isinstance(obs, dict):
             last_obs = self._last_obs.copy()
             last_obs['desired_goal'] = relabeled_buffer.observations['achieved_goal'][-1]
-            relabeled_buffer.observations['desired_goal'] = obs['achieved_goal']
+            relabeled_buffer.observations['desired_goal'] = np.take_along_axis(obs['achieved_goal'], idx[:, :, None], 0)
             goal = relabeled_buffer.observations['desired_goal']
             pos = relabeled_buffer.observations['achieved_goal']
             goal = np.concatenate([goal[1:], last_obs['desired_goal'][None]], 0)
@@ -319,6 +321,9 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         self.relabeled_buffer = relabeled_buffer
 
     def update_values(self, buffer, last_obs):
+        # def flatten(x): return {k: v.flatten(0, 1) for k, v in x.items()}
+        # obs_tensor = obs_as_tensor(rollout_buffer.observations, self.device)
+        # values = self.policy.predict_values(flatten(obs_tensor))
         def flatten(x):
             if isinstance(x, dict):
                 return {k: v.flatten(0, 1) for k, v in x.items()}
@@ -336,7 +341,10 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         with th.no_grad():
             values = self.policy.predict_values(flatten(obs_tensor))
             buffer.values = values.reshape(list(act_tensor.shape[:2])).cpu().numpy()
-            
+        
+        done = np.concatenate([buffer.episode_starts[1:], self._last_episode_starts[None]], 0)
+        buffer.rewards = buffer.rewards + self.gamma * buffer.values * done
+
         # Returns and advantages
         buffer.returns = np.zeros_like(buffer.returns)
         buffer.advantages = np.zeros_like(buffer.advantages)

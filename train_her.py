@@ -41,6 +41,7 @@ parser.add_argument('--n_steps', type=int, default=32768)
 parser.add_argument('--buffer_size', type=int, default=1_000_000)
 parser.add_argument('--gradient_steps', type=int, default=1)
 parser.add_argument('--batch_size', type=int, default=64)
+parser.add_argument('--n_epochs', type=int, default=10)
 parser.add_argument('--algo', type=str, default='SAC')
 parser.add_argument('--net_arch', type=str, default='', choices=['', 'large'])
 parser.add_argument('--her', type=int, default=0)
@@ -74,7 +75,6 @@ config = dict(
 policy_config = args.__dict__.copy()
 policy_config['n_steps'] = args.n_steps // n_envs
 policy_config['train_freq'] = 1
-policy_config['n_epochs'] = 10
 policy_config['action_noise'] = NormalActionNoise(mean=np.zeros_like(env.action_space.low), sigma=args.action_noise * (env.action_space.high - env.action_space.low))
 if args.net_arch == 'large': policy_config['policy_kwargs'] = dict(net_arch=[256, 256, 256])
 if args.her: policy_config['policy_kwargs'] = dict(net_arch=[256, 256, 256], n_critics=2)
