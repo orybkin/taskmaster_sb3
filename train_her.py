@@ -43,9 +43,10 @@ parser.add_argument('--gradient_steps', type=int, default=1)
 parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('--n_epochs', type=int, default=10)
 parser.add_argument('--algo', type=str, default='SAC')
-parser.add_argument('--net_arch', type=str, default='', choices=['', 'large'])
+parser.add_argument('--net_arch', type=str, default='')
 parser.add_argument('--her', type=int, default=0)
 parser.add_argument('--env_name', type=str, default='FetchReach-v2')
+parser.add_argument('--log_std_init', type=float, default=0.0)
 parser.add_argument('--device', type=str, default='auto')
 parser.add_argument('--learning_rate_schedule', type=str, default='')
 args = parser.parse_args()
@@ -76,9 +77,10 @@ policy_config = args.__dict__.copy()
 policy_config['n_steps'] = args.n_steps // n_envs
 policy_config['train_freq'] = 1
 policy_config['action_noise'] = NormalActionNoise(mean=np.zeros_like(env.action_space.low), sigma=args.action_noise * (env.action_space.high - env.action_space.low))
-if args.net_arch == 'large': policy_config['policy_kwargs'] = dict(net_arch=[256, 256, 256])
-if args.her: policy_config['policy_kwargs'] = dict(net_arch=[256, 256, 256], n_critics=2)
-for a in ['env_name', 'debug', 'total_timesteps', 'algo', 'her', 'net_arch']: policy_config.pop(a)
+policy_config['policy_kwargs'] = dict(log_std_init=args.log_std_init)
+if args.her: policy_config['policy_kwargs'].update(dict(net_arch=[256, 256, 256], n_critics=2))
+if args.net_arch: policy_config['policy_kwargs']['net_arch'] = dict(huge=[512,512,512], large=[256, 256, 256], med=[128,128,128])[args.net_arch]
+for a in ['env_name', 'debug', 'total_timesteps', 'algo', 'her', 'net_arch', 'log_std_init']: policy_config.pop(a)
 
 if args.her:
     policy_config.update(dict(

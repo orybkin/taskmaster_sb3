@@ -358,8 +358,14 @@ class MixedBuffer(BaseBuffer):
                 return th.cat([x, y], 0)
             
         start_idx = 0
-        batch1_gen = self.buffer1.get(int(batch_size * self.ratio * 2))
-        batch2_gen = self.buffer2.get(int(batch_size * (1 - self.ratio) * 2))
+        if self.ratio == 0.5:
+            # If we can, multiply the batch size by two so we go over all existing data
+            batch1_gen = self.buffer1.get(int(batch_size * self.ratio * 2))
+            batch2_gen = self.buffer2.get(int(batch_size * (1 - self.ratio) * 2))
+        else:
+            # TODO: implement a nice way to use all existing data in this case
+            batch1_gen = self.buffer1.get(int(batch_size * self.ratio))
+            batch2_gen = self.buffer2.get(int(batch_size * (1 - self.ratio)))
         shuffle = th.randperm(batch_size)
         while start_idx < self.buffer_size * self.n_envs:
             batch1 = next(batch1_gen)
