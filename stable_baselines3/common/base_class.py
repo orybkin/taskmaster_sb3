@@ -867,6 +867,8 @@ class BaseAlgorithm(ABC):
             self.diagnostics[key] = []
         if self.use_sde:
             self.logger.record("train/std", (self.actor.get_std()).mean().item())
+        if hasattr(self.policy, "log_std"):
+            self.logger.record("train/std", th.exp(self.policy.log_std).mean().item())
     
         if len(self.ep_success_buffer) > 0:
             self.logger.record("rollout/success_rate", safe_mean(self.ep_success_buffer))
